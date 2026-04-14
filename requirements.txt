@@ -1,4 +1,4 @@
 streamlit
 ccxt
 pandas
-streamlit-lightweight-charts-v5
+plotly
