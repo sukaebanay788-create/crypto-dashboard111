@@ -1,5 +1,4 @@
 streamlit
-requests
-json
-matplotlib
-streamlit-lightweight-charts-pro
+ccxt
+pandas
+streamlit-lightweight-charts
