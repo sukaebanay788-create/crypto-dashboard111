@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 
 st.set_page_config(layout="wide", page_title="Терминал")
 
@@ -18,8 +19,6 @@ st.markdown("""
     iframe {
         border: none;
         display: block;
-        width: 100%;
-        height: 100vh;
     }
     .stApp {
         margin: 0;
@@ -31,17 +30,51 @@ st.markdown("""
 left_col, right_col = st.columns([4, 1], gap="small")
 
 with left_col:
-    # Используем iframe для графика
-    st.iframe(
-        src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=BINANCE:BTCUSDT&interval=60&theme=dark&style=1&locale=ru&toolbar_bg=%23f1f3f6&hide_side_toolbar=false&allow_symbol_change=true&save_image=false&studies=RSI%40tv-basicstudies",
-        height=1000,
-        scrolling=False
-    )
+    # График TradingView через components.html
+    chart_html = """
+    <div style="height:100vh; width:100%;">
+        <div id="tradingview_chart" style="height:100vh; width:100%;"></div>
+        <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+        <script type="text/javascript">
+        new TradingView.widget({
+            "width": "100%",
+            "height": "100%",
+            "symbol": "BINANCE:BTCUSDT",
+            "interval": "60",
+            "timezone": "Etc/UTC",
+            "theme": "dark",
+            "style": "1",
+            "locale": "ru",
+            "toolbar_bg": "#f1f3f6",
+            "enable_publishing": false,
+            "hide_side_toolbar": false,
+            "allow_symbol_change": true,
+            "container_id": "tradingview_chart"
+        });
+        </script>
+    </div>
+    """
+    components.html(chart_html, height=1000)
 
 with right_col:
-    # iframe для скринера
-    st.iframe(
-        src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_screener&market=crypto&defaultScreen=top_gainers&colorTheme=dark&locale=ru",
-        height=1000,
-        scrolling=False
-    )
+    # Скринер TradingView через components.html
+    screener_html = """
+    <div style="height:100vh; width:100%;">
+        <div id="tradingview_screener" style="height:100vh; width:100%;"></div>
+        <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-screener.js"></script>
+        <script type="text/javascript">
+        new TradingView.ScreenerWidget({
+            "width": "100%",
+            "height": "100%",
+            "defaultColumn": "overview",
+            "defaultScreen": "top_gainers",
+            "market": "crypto",
+            "showToolbar": true,
+            "colorTheme": "dark",
+            "locale": "ru",
+            "container_id": "tradingview_screener"
+        });
+        </script>
+    </div>
+    """
+    components.html(screener_html, height=1000)
