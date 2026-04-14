@@ -1,4 +1,4 @@
 streamlit
 ccxt
 pandas
-streamlit-lightweight-charts
+streamlit-lightweight-charts-v5
