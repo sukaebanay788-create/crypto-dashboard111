@@ -1,26 +1,22 @@
 import streamlit as st
 import ccxt
 import pandas as pd
-from streamlit_lightweight_charts import render_lightweight_charts
+from lightweight_charts_v5 import lightweight_charts_v5_component
 
-# Настройка страницы
-st.set_page_config(layout="wide", page_title="Крипто-Скринер")
+st.set_page_config(layout="wide", page_title="Crypto Screener")
 st.markdown("<style>.block-container{padding:0;}[data-testid=column]{padding:0!important}</style>", unsafe_allow_html=True)
 
-# Инициализация биржи
 @st.cache_resource
 def init_exchange():
     return ccxt.okx({'enableRateLimit': True})
 
 exchange = init_exchange()
 
-# Получение списка пар USDT
 @st.cache_data(ttl=300)
 def get_usdt_symbols():
     markets = exchange.load_markets()
     return [s for s in markets if s.endswith('/USDT')]
 
-# Загрузка свечных данных
 @st.cache_data(ttl=60)
 def fetch_ohlcv(symbol, limit=200):
     ohlcv = exchange.fetch_ohlcv(symbol, '1h', limit=limit)
@@ -28,11 +24,9 @@ def fetch_ohlcv(symbol, limit=200):
     df['time'] = pd.to_datetime(df['timestamp'], unit='ms').dt.strftime('%Y-%m-%d')
     return df
 
-# Управление состоянием
 if 'symbol' not in st.session_state:
     st.session_state.symbol = 'BTC/USDT'
 
-# --- ИНТЕРФЕЙС ---
 left, right = st.columns([4, 1])
 
 with left:
@@ -43,10 +37,36 @@ with left:
             columns={'time': 'time', 'open': 'open', 'high': 'high', 'low': 'low', 'close': 'close'}
         ).to_dict('records')
         
-        render_lightweight_charts([{
-            "chart": {"height": 750, "layout": {"background": {"color": "#0e1117"}, "textColor": "#d1d4dc"}},
-            "series": [{"type": "Candlestick", "data": chart_data, "options": {"upColor": "#26a69a", "downColor": "#ef5350"}}]
-        }])
+        # Рендерим график с помощью v5
+        lightweight_charts_v5_component(
+            name=f"{st.session_state.symbol} Chart",
+            charts=[{
+                "chart": {
+                    "layout": {
+                        "background": {"color": "#0e1117"},
+                        "textColor": "#d1d4dc"
+                    },
+                    "grid": {
+                        "vertLines": {"color": "rgba(42, 46, 57, 0)"},
+                        "horzLines": {"color": "rgba(42, 46, 57, 0.6)"},
+                    }
+                },
+                "series": [{
+                    "type": "Candlestick",
+                    "data": chart_data,
+                    "options": {
+                        "upColor": "#26a69a",
+                        "downColor": "#ef5350",
+                        "borderVisible": False,
+                        "wickUpColor": "#26a69a",
+                        "wickDownColor": "#ef5350"
+                    }
+                }],
+            }],
+            height=800
+        )
+    else:
+        st.warning("Нет данных для отображения")
 
 with right:
     st.markdown("**📋 Все монеты**")
