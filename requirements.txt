@@ -3,3 +3,4 @@ ccxt
 pandas
 plotly
 streamlit-lightweight-charts
+streamlit.components.v1.html
