@@ -1,59 +1,110 @@
 import streamlit as st
+import streamlit.components.v1 as components
+import pandas as pd
+import requests
+from datetime import datetime
 
-# --- Настройка страницы: широкий режим и плотное размещение ---
-st.set_page_config(layout="wide", page_title="Crypto Screener")
+st.set_page_config(page_title="Крипто Скринер", layout="wide")
 
-# CSS для удаления всех отступов и промежутков
-st.markdown("""
-<style>
-    /* Убираем отступы у основного контейнера Streamlit */
-    .block-container {
-        padding-top: 0rem;
-        padding-bottom: 0rem;
-        padding-left: 0rem;
-        padding-right: 0rem;
-        max-width: 100%;
-    }
-    /* Убираем отступы у колонок (div-ов с атрибутом data-testid="column") */
-    div[data-testid="column"] {
-        padding: 0px !important;
-    }
-    /* Убираем лишние внешние отступы у самого приложения */
-    .stApp {
-        margin: 0;
-        padding: 0;
-    }
-    /* Убираем рамку у iframe и делаем его блочным элементом */
-    iframe {
-        border: none;
-        display: block;
-    }
-</style>
-""", unsafe_allow_html=True)
+st.title("📊 Крипто Скринер")
+st.markdown("Выберите торговую пару для просмотра графика и данных.")
 
-# --- Создаем две колонки: левая (график) – широкая, правая (скринер) – узкая ---
-# gap="small" минимизирует расстояние между колонками
-left_col, right_col = st.columns([4, 1], gap="small")
-
-# --- ЛЕВАЯ КОЛОНКА: ГРАФИК TRADINGVIEW ---
-with left_col:
-    # URL для виджета "Advanced Chart" (можно менять символ и настройки)
-    chart_url = "https://s.tradingview.com/widgetembed/?frameElementId=tradingview_chart&symbol=BINANCE%3ABTCUSDT&interval=60&theme=dark&style=1&locale=ru&toolbar_bg=%23f1f3f6&hide_side_toolbar=false&allow_symbol_change=true&save_image=false&studies=RSI%40tv-basicstudies"
-    
-    # Встраиваем виджет через iframe
-    st.components.v1.iframe(
-        src=chart_url,
-        height=1000,   # Высота подбирается под экран (можно увеличить)
-        scrolling=False
+# --- Боковая панель для настроек и фильтров ---
+with st.sidebar:
+    st.header("⚙️ Настройки")
+    symbol = st.selectbox(
+        "Выберите торговую пару:",
+        ("BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "SOLUSDT"),
+        index=0
+    )
+    interval = st.selectbox(
+        "Интервал графика:",
+        ("60", "240", "D", "W"),
+        format_func=lambda x: {"60": "1 час", "240": "4 часа", "D": "1 день", "W": "1 неделя"}[x],
+        index=0
     )
 
-# --- ПРАВАЯ КОЛОНКА: СКРИНЕР МОНЕТ TRADINGVIEW ---
-with right_col:
-    # URL для виджета "Screener" с сортировкой по росту за 24ч
-    screener_url = "https://s.tradingview.com/widgetembed/?frameElementId=tradingview_screener&market=crypto&defaultScreen=top_gainers&colorTheme=dark&locale=ru"
+# --- Функции для работы с Binance API ---
+@st.cache_data(ttl=60) # Кэшируем данные на 60 секунд
+def get_binance_data(symbol):
+    """Получает 24-часовую статистику и последние сделки с Binance."""
+    ticker_url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
+    trades_url = f"https://api.binance.com/api/v3/trades?symbol={symbol}&limit=25"
+    try:
+        ticker_data = requests.get(ticker_url).json()
+        trades_data = requests.get(trades_url).json()
+        return ticker_data, trades_data
+    except Exception as e:
+        st.error(f"Ошибка получения данных: {e}")
+        return {}, []
+
+# --- Виджет графика TradingView ---
+def get_tradingview_chart(symbol, interval):
+    """Возвращает HTML-код для встраивания виджета TradingView."""
+    # Используем формат BINANCE:{SYMBOL} для корректного отображения
+    tv_symbol = f"BINANCE:{symbol}"
+    return f"""
+    <!-- TradingView Widget BEGIN -->
+    <div class="tradingview-widget-container" style="height:100%; width:100%">
+      <div id="tradingview_chart" style="height:600px; width:100%"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+      <script type="text/javascript">
+      new TradingView.widget(
+      {{
+        "autosize": true,
+        "symbol": "{tv_symbol}",
+        "interval": "{interval}",
+        "timezone": "Etc/UTC",
+        "theme": "dark",
+        "style": "1",
+        "locale": "ru",
+        "toolbar_bg": "#f1f3f6",
+        "enable_publishing": false,
+        "allow_symbol_change": true,
+        "container_id": "tradingview_chart"
+      }});
+      </script>
+    </div>
+    <!-- TradingView Widget END -->
+    """
+
+# --- Основной блок приложения ---
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    st.subheader(f"График {symbol}")
+    # Встраиваем график как HTML-компонент
+    chart_html = get_tradingview_chart(symbol, interval)
+    components.html(chart_html, height=600)
+
+with col2:
+    st.subheader(f"Данные по {symbol}")
+    ticker, trades = get_binance_data(symbol)
     
-    st.components.v1.iframe(
-        src=screener_url,
-        height=1000,
-        scrolling=False
-    )
+    if ticker:
+        # Отображаем ключевые метрики
+        col_metric1, col_metric2, col_metric3 = st.columns(3)
+        with col_metric1:
+            st.metric("Цена", f"${float(ticker['lastPrice']):,.2f}")
+        with col_metric2:
+            price_change = float(ticker['priceChangePercent'])
+            st.metric("24ч %", f"{price_change:.2f}%", delta=f"{price_change:.2f}%")
+        with col_metric3:
+            st.metric("Объём (24ч)", f"${float(ticker['quoteVolume']):,.0f}")
+        
+        # Таблица последних сделок
+        st.subheader("Последние сделки")
+        if trades:
+            df_trades = pd.DataFrame(trades)
+            df_trades['time'] = pd.to_datetime(df_trades['time'], unit='ms')
+            df_trades['price'] = df_trades['price'].astype(float).round(2)
+            df_trades['qty'] = df_trades['qty'].astype(float).round(4)
+            df_trades = df_trades[['time', 'price', 'qty']]
+            df_trades.columns = ['Время', 'Цена', 'Количество']
+            # Добавим визуальное форматирование
+            st.dataframe(df_trades, use_container_width=True, hide_index=True)
+    else:
+        st.warning("Нет данных для отображения.")
+
+st.markdown("---")
+st.caption("Данные предоставлены Binance API. График от TradingView.")
