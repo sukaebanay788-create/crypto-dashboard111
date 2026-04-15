@@ -3,71 +3,173 @@ import streamlit.components.v1 as components
 import pandas as pd
 import requests
 import json
+import time
+from datetime import datetime
 
 st.set_page_config(page_title="Крипто Скринер", layout="wide")
 
 st.title("📊 Крипто Скринер")
 st.markdown("Выберите торговую пару для просмотра графика и данных.")
 
+# --- Конфигурация API (переключатель между источниками) ---
+API_SOURCES = {
+    "OKX (рекомендуется)": {
+        "base_url": "https://www.okx.com",
+        "ticker_endpoint": "/api/v5/market/ticker",
+        "trades_endpoint": "/api/v5/market/trades",
+        "symbol_format": lambda s: s.replace("USDT", "-USDT"),  # BTCUSDT -> BTC-USDT
+    },
+    "Bybit": {
+        "base_url": "https://api.bybit.com",
+        "ticker_endpoint": "/v5/market/tickers",
+        "trades_endpoint": "/v5/market/recent-trade",
+        "symbol_format": lambda s: s,  # Bybit принимает BTCUSDT без дефиса
+    },
+}
+
 # --- Боковая панель ---
 with st.sidebar:
     st.header("⚙️ Настройки")
-    # Расширенный список популярных пар
+    
+    # Выбор источника данных
+    source_name = st.selectbox(
+        "Источник данных:",
+        list(API_SOURCES.keys()),
+        index=0
+    )
+    api_config = API_SOURCES[source_name]
+    
     symbols_list = [
         "BTCUSDT", "ETHUSDT", "BNBUSDT", "ADAUSDT", "SOLUSDT",
-        "XRPUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT", "LTCUSDT"
+        "XRPUSDT", "DOGEUSDT", "DOTUSDT", "MATICUSDT", "LTCUSDT",
+        "AVAXUSDT", "LINKUSDT", "UNIUSDT", "ATOMUSDT", "ETCUSDT"
     ]
     symbol = st.selectbox("Выберите торговую пару:", symbols_list)
+    custom_symbol = st.text_input("Или введите свою пару (например, AVAXUSDT):")
+    if custom_symbol:
+        symbol = custom_symbol.upper().strip()
+    
     interval = st.selectbox(
         "Интервал графика:",
         ("60", "240", "D", "W"),
         format_func=lambda x: {"60": "1 час", "240": "4 часа", "D": "1 день", "W": "1 неделя"}[x],
         index=0
     )
-    # Добавим ручной ввод для продвинутых пользователей
-    custom_symbol = st.text_input("Или введите свою пару (например, AVAXUSDT):")
-    if custom_symbol:
-        symbol = custom_symbol.upper().strip()
-
-# --- Функции для безопасной работы с API Binance ---
-@st.cache_data(ttl=60, show_spinner="Загрузка данных с Binance...")
-def get_binance_data(symbol):
-    """Получает 24-часовую статистику и последние сделки с Binance."""
-    ticker_url = f"https://api.binance.com/api/v3/ticker/24hr?symbol={symbol}"
-    trades_url = f"https://api.binance.com/api/v3/trades?symbol={symbol}&limit=20"
     
-    # Инициализация пустыми значениями
+    # Кнопка ручного обновления (кэш сбрасывается)
+    if st.button("🔄 Принудительно обновить данные"):
+        st.cache_data.clear()
+        st.rerun()
+
+# --- Функции для работы с API выбранной биржи ---
+@st.cache_data(ttl=60, show_spinner="Загрузка данных...")
+def get_market_data(symbol, api_config):
+    """Получает тикер и последние сделки с выбранной биржи."""
+    formatted_symbol = api_config["symbol_format"](symbol)
+    base_url = api_config["base_url"]
+    
     ticker_data = None
     trades_data = []
     error_msg = None
 
     try:
-        # Запрос тикера
-        resp = requests.get(ticker_url, timeout=5)
-        if resp.status_code == 200:
-            ticker_data = resp.json()
-            # Проверяем, что API вернуло объект, а не сообщение об ошибке
-            if "code" in ticker_data and ticker_data["code"] < 0:
-                error_msg = f"Binance API Error: {ticker_data.get('msg', 'Неизвестная ошибка')}"
-                ticker_data = None
-        else:
-            error_msg = f"HTTP ошибка {resp.status_code}"
-        
-        # Запрос сделок
-        resp_trades = requests.get(trades_url, timeout=5)
-        if resp_trades.status_code == 200:
-            trades_data = resp_trades.json()
+        if "OKX" in api_config["base_url"]:
+            # --- OKX API ---
+            ticker_url = f"{base_url}{api_config['ticker_endpoint']}?instId={formatted_symbol}"
+            resp = requests.get(ticker_url, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("code") == "0" and data.get("data"):
+                    ticker_data = data["data"][0]
+                else:
+                    error_msg = f"OKX API Error: {data.get('msg', 'Неизвестная ошибка')}"
+            else:
+                error_msg = f"HTTP ошибка {resp.status_code}"
+            
+            # Сделки OKX
+            trades_url = f"{base_url}{api_config['trades_endpoint']}?instId={formatted_symbol}&limit=20"
+            resp_trades = requests.get(trades_url, timeout=5)
+            if resp_trades.status_code == 200:
+                data = resp_trades.json()
+                if data.get("code") == "0" and data.get("data"):
+                    trades_data = data["data"]
+                    
+        elif "bybit" in api_config["base_url"]:
+            # --- Bybit API (запасной вариант) ---
+            ticker_url = f"{base_url}{api_config['ticker_endpoint']}?category=spot&symbol={formatted_symbol}"
+            resp = requests.get(ticker_url, timeout=5)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("retCode") == 0 and data.get("result", {}).get("list"):
+                    ticker_data = data["result"]["list"][0]
+                else:
+                    error_msg = f"Bybit API Error: {data.get('retMsg', 'Неизвестная ошибка')}"
+            else:
+                error_msg = f"HTTP ошибка {resp.status_code}"
+            
+            # Сделки Bybit
+            trades_url = f"{base_url}{api_config['trades_endpoint']}?category=spot&symbol={formatted_symbol}&limit=20"
+            resp_trades = requests.get(trades_url, timeout=5)
+            if resp_trades.status_code == 200:
+                data = resp_trades.json()
+                if data.get("retCode") == 0 and data.get("result", {}).get("list"):
+                    trades_data = data["result"]["list"]
+                    
     except requests.exceptions.RequestException as e:
         error_msg = f"Сетевая ошибка: {e}"
     except json.JSONDecodeError:
-        error_msg = "Ошибка парсинга ответа от Binance"
+        error_msg = "Ошибка парсинга ответа от API"
 
     return ticker_data, trades_data, error_msg
+
+# --- Нормализация данных из разных источников в единый формат ---
+def normalize_ticker_data(raw_data, source_name):
+    """Приводит данные из разных API к единой структуре."""
+    if source_name == "OKX (рекомендуется)":
+        return {
+            "last": float(raw_data.get("last", 0)),
+            "change_pct": float(raw_data.get("open24h", 0)) if float(raw_data.get("open24h", 0)) > 0 else 0,
+            "high": float(raw_data.get("high24h", 0)),
+            "low": float(raw_data.get("low24h", 0)),
+            "volume": float(raw_data.get("vol24h", 0)),
+            "change_absolute": float(raw_data.get("last", 0)) - float(raw_data.get("open24h", 0))
+        }
+    elif source_name == "Bybit":
+        return {
+            "last": float(raw_data.get("lastPrice", 0)),
+            "change_pct": float(raw_data.get("price24hPcnt", 0)) * 100,
+            "high": float(raw_data.get("highPrice24h", 0)),
+            "low": float(raw_data.get("lowPrice24h", 0)),
+            "volume": float(raw_data.get("turnover24h", 0)),
+            "change_absolute": float(raw_data.get("lastPrice", 0)) - float(raw_data.get("prevPrice24h", 0))
+        }
+    return {}
+
+def normalize_trades_data(raw_trades, source_name):
+    """Приводит список сделок к единому формату DataFrame."""
+    if not raw_trades:
+        return pd.DataFrame()
+    
+    if source_name == "OKX (рекомендуется)":
+        df = pd.DataFrame(raw_trades)
+        df['time'] = pd.to_datetime(df['ts'].astype(float), unit='ms')
+        df['price'] = df['px'].astype(float)
+        df['qty'] = df['sz'].astype(float)
+        df['side'] = df['side']
+    elif source_name == "Bybit":
+        df = pd.DataFrame(raw_trades)
+        df['time'] = pd.to_datetime(df['time'].astype(float), unit='ms')
+        df['price'] = df['price'].astype(float)
+        df['qty'] = df['size'].astype(float)
+        df['side'] = df['side']
+    
+    return df[['time', 'price', 'qty', 'side']]
 
 # --- Виджет графика TradingView ---
 def get_tradingview_chart(symbol, interval):
     """Возвращает HTML-код для встраивания виджета TradingView."""
-    tv_symbol = f"BINANCE:{symbol}"
+    # Для TradingView используем префикс OKX (если данные с OKX) или BINANCE (универсально)
+    tv_symbol = f"OKX:{symbol.replace('USDT', 'USDT')}"  # OKX:BTCUSDT
     return f"""
     <div class="tradingview-widget-container" style="height:100%; width:100%">
       <div id="tradingview_chart" style="height:600px; width:100%"></div>
@@ -100,63 +202,62 @@ with col1:
     components.html(chart_html, height=600)
 
 with col2:
-    st.subheader(f"Данные по {symbol}")
-    ticker, trades, error = get_binance_data(symbol)
+    st.subheader(f"Данные по {symbol} (источник: {source_name})")
+    ticker_raw, trades_raw, error = get_market_data(symbol, api_config)
     
     if error:
         st.error(f"⚠️ Не удалось получить данные: {error}")
-    elif ticker:
-        # Проверяем наличие всех необходимых ключей
-        last_price = ticker.get('lastPrice')
-        price_change_percent = ticker.get('priceChangePercent')
-        quote_volume = ticker.get('quoteVolume')
-        high_24h = ticker.get('highPrice')
-        low_24h = ticker.get('lowPrice')
-        
-        # Отображаем метрики, если они есть
-        col_metric1, col_metric2, col_metric3 = st.columns(3)
-        with col_metric1:
-            if last_price:
-                st.metric("Цена", f"${float(last_price):,.4f}")
+        st.info("💡 Попробуйте другой источник данных в боковом меню или проверьте правильность символа.")
+    elif ticker_raw:
+        # Нормализуем данные
+        ticker = normalize_ticker_data(ticker_raw, source_name)
+        if ticker:
+            change_pct = ticker.get("change_pct", 0)
+            
+            # Отображаем метрики
+            col_metric1, col_metric2, col_metric3 = st.columns(3)
+            with col_metric1:
+                st.metric("Цена", f"${ticker.get('last', 0):,.4f}")
+            with col_metric2:
+                st.metric("24ч %", f"{change_pct:.2f}%", delta=f"{change_pct:.2f}%")
+            with col_metric3:
+                st.metric("Объём (24ч)", f"${ticker.get('volume', 0):,.0f}")
+            
+            # High/Low
+            high = ticker.get('high', 0)
+            low = ticker.get('low', 0)
+            st.caption(f"24h High/Low: {high:,.4f} / {low:,.4f}")
+            
+            # Таблица последних сделок
+            st.subheader("Последние сделки")
+            df_trades = normalize_trades_data(trades_raw, source_name)
+            if not df_trades.empty:
+                # Цветовое кодирование сторон
+                def color_side(val):
+                    if val == 'buy':
+                        return 'color: #00ff00'
+                    elif val == 'sell':
+                        return 'color: #ff5555'
+                    return ''
+                
+                styled_df = df_trades.style.applymap(color_side, subset=['side'])
+                st.dataframe(
+                    styled_df.format({'price': '{:.4f}', 'qty': '{:.4f}'}),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "time": "Время",
+                        "price": "Цена",
+                        "qty": "Объём",
+                        "side": "Сторона"
+                    }
+                )
             else:
-                st.metric("Цена", "Н/Д")
-        with col_metric2:
-            if price_change_percent:
-                change = float(price_change_percent)
-                st.metric("24ч %", f"{change:.2f}%", delta=f"{change:.2f}%")
-            else:
-                st.metric("24ч %", "Н/Д")
-        with col_metric3:
-            if quote_volume:
-                st.metric("Объём (24ч)", f"${float(quote_volume):,.0f}")
-            else:
-                st.metric("Объём (24ч)", "Н/Д")
-        
-        # Дополнительные данные: High/Low
-        if high_24h and low_24h:
-            st.caption(f"24h High/Low: {float(high_24h):,.4f} / {float(low_24h):,.4f}")
-        
-        # Таблица последних сделок
-        st.subheader("Последние сделки")
-        if trades:
-            df_trades = pd.DataFrame(trades)
-            # Преобразуем время
-            df_trades['time'] = pd.to_datetime(df_trades['time'], unit='ms')
-            df_trades['price'] = df_trades['price'].astype(float)
-            df_trades['qty'] = df_trades['qty'].astype(float)
-            # Оставляем нужные колонки
-            df_trades = df_trades[['time', 'price', 'qty']]
-            df_trades.columns = ['Время', 'Цена', 'Количество']
-            # Форматируем таблицу
-            st.dataframe(
-                df_trades.style.format({'Цена': '{:.4f}', 'Количество': '{:.4f}'}),
-                use_container_width=True,
-                hide_index=True
-            )
+                st.info("Нет данных о последних сделках")
         else:
-            st.info("Нет данных о последних сделках")
+            st.warning("Не удалось распарсить данные тикера")
     else:
         st.warning("Нет данных для отображения.")
 
 st.markdown("---")
-st.caption("Данные предоставлены Binance API. График от TradingView.")
+st.caption(f"Данные предоставлены {source_name}. График от TradingView. Обновлено: {datetime.now().strftime('%H:%M:%S')}")
